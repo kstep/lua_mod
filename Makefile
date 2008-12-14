@@ -53,3 +53,6 @@ all:
 install:
 	make all
 	sudo cp lsysctl.so lifaddrs.so lmixer.so lmpdc.so lbit.so lsocket.so /usr/local/lib/lua/5.1/
+
+clean:
+	rm -f *.so *.o
