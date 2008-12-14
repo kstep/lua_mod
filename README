@@ -1,0 +1,58 @@
+Small FAQ.
+
+Q: What's this?
+A: It's my set of Lua libraries to help controlling my FreeBSD system
+(mainly to get some system info for Awesome widgets).
+
+Q: What OS does it work for?
+A: FreeBSD 7.0 and up.
+
+Q: Does it work on FreeBSD only? What about Linux?
+A: I wrote it for myself at first, and my primary OS is FreeBSD.
+I expect some libs will work for Linux (lmixer), while other will
+hardly do so (lsysctl). Well, I never tested all this staff on Linux,
+so if you manage to run them on your Linux-box please report me
+your OS :)
+
+Q: What all these files for?
+A: Libraries I use constantly are:
+
+	* lmixer.c - controls mixer device: get and set volume levels,
+	* lsysctl.c - Lua interface to FreeBSD's sysctl(3) system,
+	* lmntinfo.c - get info about mounted file systems (I use it to fetch
+	  free space on my hdds), interface to FreeBSD's getmntinfo(3) system call,
+	* lmpdc.c - Lua interface to MPD (Music Player Daemon), can control playback,
+	  set different playback parameters (like looping & random playing),
+	  list playlist, get info about current playing song etc.
+
+Q: What about other libs?
+A: There're some libs under development state and some helper libs which
+you can use to make life simplier:
+
+	* lbit.c - adds bitwise operations to Lua: you can perform bitwise
+	  "or", "and", "xor", "not and", "shift left" & "shift right" just like
+	  in C (|, &, ^, ! (a & b), <<, >>),
+	* lifaddrs.c - interface to FreeBSD's getifaddrs(3) system call - EXPRIMENTAL!,
+	* lsocket.c - interface to FreeBSD's socket(2) system - EXPRIMENTAL!,
+
+Q: And what about *.lua files in the repo?
+A: Yes, it's examples of usage corresponding libraries!
+Feel free to play with them to make out how does all these things work.
+
+Q: Can I see better documentation?
+A: Sorry, docs are in C & Lua languages now. Not sure if I ever write some
+better docs, but if you manage to do it, email me, I will be very glad to put
+it into repository.
+
+Q: I found a bug!
+A: Wonderful! Email me bug description, the way of repoduction & a patch
+(if possible, of cause). I will try to fix it ASAP.
+
+Q: What about licensing?
+A: The whole thing is free! Consider it's under GPL or any compatible license.
+
+Q: How can I contact you?
+A: My email is milezv@yandex.ru. Feel free to send feedbacks!
+I will be vary glad it my work is required among people.
+
+
