@@ -1,0 +1,18 @@
+assert(package.loadlib("./lbit.so", "luaopen_bit"))()
+
+--print(bit)
+a = bit(255)
+b = bit(128)
+
+print(#a)
+print(#b)
+print(bit(3) + (2))
+print(3 + bit(2))
+print()
+print(255 * bit(1))
+print(101 * bit(1))
+print(102 * bit(1))
+print(bit(102)[1])
+print(bit(255))
+print(-bit(1))
+print(-bit(0))
