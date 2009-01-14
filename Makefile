@@ -1,4 +1,4 @@
-GCC_FLAGS=-I/usr/include -I/usr/local/include/lua51
+GCC_FLAGS=-I/usr/include -I/usr/include/lua5.1
 # GCC_FLAGS=-O0 -fno-inline -I/usr/include -I/usr/local/include/lua51
 
 mntinfo:
@@ -9,37 +9,42 @@ mntinfo:
 sysctl:
 	gcc ${GCC_FLAGS} -c lsysctl.c && \
 	gcc -o lsysctl.so -shared lsysctl.o && \
-	strip lmntinfo.so
+	strip lsysctl.so
 
 ifaddrs:
 	gcc ${GCC_FLAGS} -c lifaddrs.c && \
 	gcc -o lifaddrs.so -shared lifaddrs.o && \
-	strip lmntinfo.so
+	strip lifaddrs.so
 
 mixer:
 	gcc ${GCC_FLAGS} -c lmixer.c && \
 	gcc -o lmixer.so -shared lmixer.o && \
-	strip lmntinfo.so
+	strip lmixer.so
+
+amixer:
+	gcc ${GCC_FLAGS} -c lamixer.c && \
+	gcc -o lamixer.so -lasound -shared lamixer.o && \
+	strip lamixer.so
 
 mpdc:
 	gcc ${GCC_FLAGS} -c lmpdc.c && \
 	gcc -o lmpdc.so -shared lmpdc.o && \
-	strip lmntinfo.so
+	strip lmpdc.so
 
 test:
 	gcc ${GCC_FLAGS} -c test.c && \
 	gcc -o test.so -shared test.o && \
-	strip lmntinfo.so
+	strip test.so
 
 bit:
 	gcc ${GCC_FLAGS} -c lbit.c && \
 	gcc -o lbit.so -shared lbit.o && \
-	strip lmntinfo.so
+	strip lbit.so
 
 socket:
 	gcc ${GCC_FLAGS} -c lsocket.c && \
 	gcc -o lsocket.so -shared lsocket.o && \
-	strip lmntinfo.so
+	strip lsocket.so
 
 all:
 	make mntinfo \
