@@ -27,6 +27,25 @@
 	} \
 	while (0)
 
+#define luaA_checkmetaindex(L, metatable) \
+    do { \
+        luaL_getmetatable(L, metatable); \
+        lua_pushvalue(L, 2); \
+        lua_rawget(L, -2); \
+        if (lua_isnil(L, -1)) { \
+            lua_pop(L, 2); \
+        } else { \
+            lua_remove(L, -2); \
+            return 1; \
+        } \
+    } \
+    while (0)
+
+#define luaA_deftype(L, metaname) \
+    luaL_newmetatable(L, #metaname); \
+    luaL_register(L, NULL, metaname##_meta); \
+    lua_pop(L, 1)
+
 #define LUAA_SREG(name) static const luaL_reg name [] = {
 #define LUAA_REG(objname, name) { #name, luaA_##objname##_##name },
 #define LUAA_MREG(objname, name) { "__" #name, luaA_##objname##_##name },
