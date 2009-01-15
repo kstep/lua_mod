@@ -13,6 +13,16 @@
 	lua_push##luatype (L, value); \
 	lua_rawseti(L, tableidx, index)
 
+#define luaA_gettable(L, tableidx, index, luatype, value) \
+    lua_getfield(L, tableidx, index); \
+    value = lua_to##luatype(L, -1); \
+    lua_pop(L, 1)
+
+#define luaA_igettable(L, tableidx, index, luatype, value) \
+    lua_rawgeti(L, tableidx, index); \
+    value = lua_to##luatype(L, -1); \
+    lua_pop(L, 1)
+
 #define LUAA_FUNC(name) static int luaA_##name (lua_State *L)
 
 #define luaA_settype(L, idx, type) \

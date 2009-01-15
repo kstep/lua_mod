@@ -114,6 +114,14 @@ static lua_amixer_channel_name_t lua_amixer_channel_names[SND_MIXER_SCHN_LAST];
 // }}}
 
 // Helper functions {{{
+/**
+ * Initialize channel id -> name conversion array.
+ * We need it b/c there's only snd_mixer_selem_channel_name() function
+ * which allow us to get channel name by id, but we don't have any means
+ * to get channel id by its name.
+ * @return void
+ * @internal
+ */
 static void amixer_init_chanid_cache()
 {
     snd_mixer_selem_channel_id_t i;
@@ -124,6 +132,13 @@ static void amixer_init_chanid_cache()
     }
 }
 
+/**
+ * Get channel numeric id by its name.
+ * @see static void amixer_init_chanid_cache()
+ * @internal
+ * @param char *channame
+ * @return snd_mixer_selem_channel_id_t
+ */
 static snd_mixer_selem_channel_id_t amixer_get_chanid_by_name(const char *channame)
 {
     snd_mixer_selem_channel_id_t i;
@@ -135,7 +150,11 @@ static snd_mixer_selem_channel_id_t amixer_get_chanid_by_name(const char *channa
 }
 
 /**
- * Найти элемент миксера по имени и вернуть его
+ * Find mixer element by its name.
+ * @internal
+ * @param snd_mixer_t *mixer
+ * @param char *elemname
+ * @return snd_mixer_elem_t*
  */
 static snd_mixer_elem_t* amixer_find_selem(snd_mixer_t *mixer, const char *elemname)
 {
@@ -157,6 +176,12 @@ amixer_selem_failed:
     return NULL;
 }
 
+/**
+ * Mixer object destructor.
+ * @internal
+ * @param lua_amixer_t *mixer
+ * @return void
+ */
 static void amixer_dtor(lua_amixer_t *mixer)
 {
     mixer->refcnt--;
@@ -168,6 +193,12 @@ static void amixer_dtor(lua_amixer_t *mixer)
     }
 }
 
+/**
+ * Mixer element object destructor.
+ * @internal
+ * @param lua_amixer_elem_t *elem
+ * @return void
+ */
 static void amixer_elem_dtor(lua_amixer_elem_t *elem)
 {
     /*amixer_dtor(elem->mixer);*/
@@ -180,13 +211,22 @@ static void amixer_elem_dtor(lua_amixer_elem_t *elem)
     }
 }
 
+/**
+ * Mixer channel object destructor.
+ * @internal
+ * @param lua_amixer_chan_t *chan
+ * @return void
+ */
 static void amixer_chan_dtor(lua_amixer_chan_t *chan)
 {
-    amixer_elem_dtor(chan->elem);
+    //amixer_elem_dtor(chan->elem);
 }
 
 /**
- * Прочитать свойтсва элемента миксера и закешировать их
+ * Collect mixer element capabilities & put them into cache.
+ * @internal
+ * @param lua_amixer_elem_t *elem
+ * @return void
  */
 void amixer_fill_caps(lua_amixer_elem_t *elem)
 {
@@ -229,7 +269,15 @@ void amixer_fill_caps(lua_amixer_elem_t *elem)
 }
 
 /**
- * Создать новую структуру-обёртку для элемента миксера по его имени
+ * Construct new mixer element object.
+ * - Wraps snd_mixer_elem_t into lua_amixer_elem_t structure,
+ * - create new Lua userdata of type "amixer_elem" and links it to created struct,
+ * - runs amixer_fill_caps() to collect element's capabilities.
+ * @internal
+ * @param lua_State *L
+ * @param lua_amixer_t *mixer
+ * @param snd_mixer_elem_t *melem
+ * @return lua_amixer_elem_t*
  */
 lua_amixer_elem_t *luaA_amixer_new_elem(lua_State *L, lua_amixer_t *mixer, snd_mixer_elem_t *melem)
 {
@@ -273,6 +321,12 @@ amixer_elem_find_failed:
 // }}}
 
 // Mixer element object {{{
+/**
+ * Get next mixer element after this.
+ * @param amixer_elem state - optional
+ * @param amixer_elem elem
+ * @return amixer_elem
+ */
 LUAA_FUNC(amixer_elem_next)
 {
     int argc = lua_gettop(L);
@@ -281,7 +335,23 @@ LUAA_FUNC(amixer_elem_next)
     return luaA_amixer_new_elem(L, (*elemptr)->mixer, snd_mixer_elem_next((*elemptr)->hdl)) != NULL;
 }
 
-
+/**
+ * Get property value of mixer element object.
+ * - number vol - first channel's volume, nil if there're no volume controls,
+ * - number dB - first channel's dB gain, nil if there're no volume controls,
+ * - boolean muted - true if element is muted, nil if element can't be muted,
+ * - string name - element's name, readonly,
+ * - number idx - element's index, readonly,
+ * - amixer mixer - parent mixer object of this element, readonly,
+ * - table volrange - two number elements: min & max volume values, nil if there're no volume controls,
+ * - table dBrange - two number elements: min & max dB values, nil if there're no volume controls, readonly,
+ * - boolean mono - true if element has mono channel, readonly,
+ * - boolean playback - true if element has playback channels, readonly,
+ * - boolean capture - true if element has capture channels, readonly.
+ * @param amixer_elem elem
+ * @param string index
+ * @return mixed
+ */
 LUAA_FUNC(amixer_elem_index)
 {
     luaA_checkmetaindex(L, "amixer_elem");
@@ -382,6 +452,14 @@ LUAA_FUNC(amixer_elem_index)
     return 1;
 }
 
+/**
+ * Set property values for mixer element object.
+ * @see amixer_elem_index
+ * @param amixer_elem elem
+ * @param string index
+ * @param mixed value
+ * @return void
+ */
 LUAA_FUNC(amixer_elem_newindex)
 {
     lua_amixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
@@ -394,25 +472,51 @@ LUAA_FUNC(amixer_elem_newindex)
 
     if (strcmp(index, "vol") == 0) {
         longval = lua_tonumber(L, 3);
-        snd_mixer_selem_set_playback_volume_all((*elemptr)->hdl, longval);
+        if ((*elemptr)->pcaps & LUAA_MIX_CAP_VOLUME)
+            snd_mixer_selem_set_playback_volume_all((*elemptr)->hdl, longval);
+        else if ((*elemptr)->ccaps & LUAA_MIX_CAP_VOLUME)
+            snd_mixer_selem_set_capture_volume_all((*elemptr)->hdl, longval);
     } else if (strcmp(index, "muted") == 0) {
         intval = lua_toboolean(L, 3) == 0;
-        snd_mixer_selem_set_playback_switch_all((*elemptr)->hdl, intval);
+        if ((*elemptr)->pcaps & LUAA_MIX_CAP_SWITCH)
+            snd_mixer_selem_set_playback_switch_all((*elemptr)->hdl, intval);
+        else if ((*elemptr)->ccaps & LUAA_MIX_CAP_SWITCH)
+            snd_mixer_selem_set_capture_switch_all((*elemptr)->hdl, intval);
     } else if (strcmp(index, "dB") == 0) {
         longval = lua_tonumber(L, 3);
-        snd_mixer_selem_set_playback_dB_all((*elemptr)->hdl, longval, 1);
+        if ((*elemptr)->pcaps & LUAA_MIX_CAP_VOLUME)
+            snd_mixer_selem_set_playback_dB_all((*elemptr)->hdl, longval, 1);
+        else if ((*elemptr)->ccaps & LUAA_MIX_CAP_VOLUME)
+            snd_mixer_selem_set_capture_dB_all((*elemptr)->hdl, longval, 1);
     } else if (strcmp(index, "volrange") == 0) {
-    } else if (strcmp(index, "dBrange") == 0) {
-    } else {
+        if (lua_istable(L, 3))
+        {
+            luaA_igettable(L, 3, 1, number, longval);
+            luaA_igettable(L, 3, 2, number, longvalx);
+            if ((*elemptr)->pcaps & LUAA_MIX_CAP_VOLUME)
+                snd_mixer_selem_set_playback_volume_range((*elemptr)->hdl, longval, longvalx);
+            else if ((*elemptr)->ccaps & LUAA_MIX_CAP_VOLUME)
+                snd_mixer_selem_set_capture_volume_range((*elemptr)->hdl, longval, longvalx);
+        }
     }
 }
 
+/**
+ * Destroy mixer element, free all its resources.
+ * @param amixer_elem elem
+ * @return void
+ */
 LUAA_FUNC(amixer_elem_close)
 {
     lua_amixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
     amixer_elem_dtor(*elemptr);
 }
 
+/**
+ * Convert mixer element object into string.
+ * @param amixer_elem elem
+ * @return string
+ */
 LUAA_FUNC(amixer_elem_tostring)
 {
     lua_amixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
@@ -422,6 +526,12 @@ LUAA_FUNC(amixer_elem_tostring)
 // }}}
 
 // Mixer object methods {{{
+
+/**
+ * Open mixer object, initialize all necessary resources.
+ * @param string devname
+ * @return amixer
+ */
 LUAA_FUNC(amixer_open)
 {
     const char *mixdev = luaL_checkstring(L, 1);
@@ -461,6 +571,11 @@ mixer_open_failed:
     return 0;
 }
 
+/**
+ * Close mixer object, free all its resources.
+ * @param amixer mixer
+ * @return void
+ */
 LUAA_FUNC(amixer_close)
 {
     lua_amixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
@@ -468,7 +583,10 @@ LUAA_FUNC(amixer_close)
 }
 
 /**
- * Конструируем луа-объект «элемент миксера»
+ * Get mixer element object by its name.
+ * @param amixer mixer
+ * @param string index - element's name
+ * @return amixer_elem
  */
 LUAA_FUNC(amixer_index)
 {
@@ -479,7 +597,19 @@ LUAA_FUNC(amixer_index)
 	return luaA_amixer_new_elem(L, *mixptr, amixer_find_selem((*mixptr)->hdl, index)) != NULL;
 }
 
-// amixer_elem, int, table of int, bool
+/**
+ * Set mixer element's properties.
+ * Depending on value type this method can do following things:
+ * - number - set all element's channels volume to this value,
+ * - table - assumed to be a table of "channel name/id" => "number/boolean" pairs,
+ *   sets individual channel's volume/muted state,
+ * - boolean - switch on/off all element's channels,
+ * - amixer_elem - copy all settings from this element to designated one.
+ * @todo make table value really work.
+ * @param amixer mixer
+ * @param string index - element's name
+ * @param mixed value
+ */
 LUAA_FUNC(amixer_newindex)
 {
     lua_amixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
@@ -507,7 +637,6 @@ LUAA_FUNC(amixer_newindex)
             snd_mixer_selem_set_playback_switch_all(elem, intval);
         if (snd_mixer_selem_has_capture_switch(elem))
             snd_mixer_selem_set_capture_switch_all(elem, intval);
-        snd_mixer_elem_free(elem);
     } else {
         elemptr = luaL_checkudata(L, 3, "amixer_elem");
         for (chanid = SND_MIXER_SCHN_FRONT_LEFT; chanid <= SND_MIXER_SCHN_REAR_CENTER; chanid++)
@@ -538,22 +667,32 @@ LUAA_FUNC(amixer_newindex)
     snd_mixer_elem_free(elem);
 }
 
+/**
+ * Iterator function: enumerate all mixer's elements.
+ * @param amixer mixer
+ * @return function {@see amixer_elem_next}, nil, amixer_elem
+ */
 LUAA_FUNC(amixer_each)
 {
     lua_amixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
 
     lua_pushcfunction(L, luaA_amixer_elem_next);
+    lua_pushnil(L);
 
     if (luaA_amixer_new_elem(L, (*mixptr), snd_mixer_first_elem((*mixptr)->hdl)) == NULL)
     {
         lua_pop(L, 1);
         return 0;
     }
-    lua_pushvalue(L, -1);
     
     return 3;
 }
 
+/**
+ * Convert mixer object to string.
+ * @param amixer mixer
+ * @return string
+ */
 LUAA_FUNC(amixer_tostring)
 {
     lua_amixer_elem_t **mixptr = luaL_checkudata(L, 1, "amixer");
@@ -564,6 +703,11 @@ LUAA_FUNC(amixer_tostring)
 
 // Mixer channel methods {{{
 
+/**
+ * Convert mixer channel object to string.
+ * @param amixer_chan chan
+ * @return string
+ */
 LUAA_FUNC(amixer_chan_tostring)
 {
     lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
@@ -571,6 +715,18 @@ LUAA_FUNC(amixer_chan_tostring)
     return 1;
 }
 
+/**
+ * Get mixer channel's properties values.
+ * - number vol - channel's volume,
+ * - number dB - channel's dB gain,
+ * - boolean muted - channel's muted state,
+ * - string name - channel's name, readonly,
+ * - number idx - channel's numeric id, readonly,
+ * - amixer_elem elem - parent mixer element, readonly.
+ * @param amixer_chan chan
+ * @param string index
+ * @return mixed
+ */
 LUAA_FUNC(amixer_chan_index)
 {
     lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
@@ -622,6 +778,14 @@ LUAA_FUNC(amixer_chan_index)
     return 1;
 }
 
+/**
+ * Set mixer channel's properties values.
+ * @see amixer_chan_index
+ * @param amixer_chan chan
+ * @param string index
+ * @param mixed value
+ * @return void
+ */
 LUAA_FUNC(amixer_chan_newindex)
 {
     lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
@@ -656,6 +820,11 @@ LUAA_FUNC(amixer_chan_newindex)
     return 0;
 }
 
+/**
+ * Destructs mixer channel object.
+ * @param amixer_chan chan
+ * @return void
+ */
 LUAA_FUNC(amixer_chan_close)
 {
     lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
