@@ -73,21 +73,21 @@
 typedef struct {
     snd_mixer_selem_channel_id_t chan;
     char *name;
-} lua_mixer_channel_name_t;
+} lua_amixer_channel_name_t;
 
 typedef struct {
 	snd_mixer_t *hdl;
     /* char *devname; */
 	int refcnt;
-} lua_mixer_t;
+} lua_amixer_t;
 
 typedef struct {
     long min; long dBmin;
     long max; long dBmax;
-} lua_mixer_range_t;
+} lua_amixer_range_t;
 
 typedef struct {
-	lua_mixer_t *mixer;
+	lua_amixer_t *mixer;
     snd_mixer_elem_t *hdl;
 
 #define LUAA_MIX_CAP_VOLUME   1
@@ -97,39 +97,39 @@ typedef struct {
 #define LUAA_MIX_CAP_MONO     16
 #define LUAA_MIX_CAP_ENUM     32
 
-    int pcaps;
-    int ccaps;
-    lua_mixer_range_t prange;
-    lua_mixer_range_t crange;
+    short int pcaps;
+    short int ccaps;
+    lua_amixer_range_t prange;
+    lua_amixer_range_t crange;
     int refcnt;
-} lua_mixer_elem_t;
+} lua_amixer_elem_t;
 
 typedef struct {
-    lua_mixer_elem_t *elem;
-    snd_mixer_selem_channel_id_t chan;
-} lua_mixer_chan_t;
+    lua_amixer_elem_t *elem;
+    snd_mixer_selem_channel_id_t hdl;
+} lua_amixer_chan_t;
 
-static lua_mixer_channel_name_t lua_mixer_channel_names[SND_MIXER_SCHN_LAST];
+static lua_amixer_channel_name_t lua_amixer_channel_names[SND_MIXER_SCHN_LAST];
 
 // }}}
 
 // Helper functions {{{
-void mixer_init_chanid_cache()
+static void amixer_init_chanid_cache()
 {
     snd_mixer_selem_channel_id_t i;
     for (i = SND_MIXER_SCHN_FRONT_LEFT; i < SND_MIXER_SCHN_LAST; i++)
     {
-        lua_mixer_channel_names[i].chan = i;
-        lua_mixer_channel_names[i].name = snd_mixer_selem_channel_name(i);
+        lua_amixer_channel_names[i].chan = i;
+        lua_amixer_channel_names[i].name = snd_mixer_selem_channel_name(i);
     }
 }
 
-snd_mixer_selem_channel_id_t mixer_get_chanid_by_name(const char *channame)
+static snd_mixer_selem_channel_id_t amixer_get_chanid_by_name(const char *channame)
 {
     snd_mixer_selem_channel_id_t i;
     for (i = SND_MIXER_SCHN_FRONT_LEFT; i < SND_MIXER_SCHN_LAST; i++)
     {
-        if (strcmp(channame, lua_mixer_channel_names[i].name) == 0)
+        if (strcmp(channame, lua_amixer_channel_names[i].name) == 0)
             return i;
     }
 }
@@ -137,13 +137,13 @@ snd_mixer_selem_channel_id_t mixer_get_chanid_by_name(const char *channame)
 /**
  * Найти элемент миксера по имени и вернуть его
  */
-snd_mixer_elem_t* mixer_find_selem(snd_mixer_t *mixer, const char *elemname)
+static snd_mixer_elem_t* amixer_find_selem(snd_mixer_t *mixer, const char *elemname)
 {
     snd_mixer_elem_t *melem;
     snd_mixer_selem_id_t *id;
 
     if (snd_mixer_selem_id_malloc(&id) < 0)
-        goto mixer_selem_failed;
+        goto amixer_selem_failed;
 
     snd_mixer_selem_id_set_index(id, 0);
     snd_mixer_selem_id_set_name(id, elemname);
@@ -153,52 +153,42 @@ snd_mixer_elem_t* mixer_find_selem(snd_mixer_t *mixer, const char *elemname)
 
     return melem;
 
-mixer_selem_failed:
+amixer_selem_failed:
     return NULL;
 }
 
-/**
- * Создать новую структуру-обёртку для элемента миксера по его имени
- */
-lua_mixer_elem_t *mixer_new_elem(lua_mixer_t *mixer, const char *elemname)
+static void amixer_dtor(lua_amixer_t *mixer)
 {
-    //int err;
-    lua_mixer_elem_t *elem = NULL;
-    snd_mixer_elem_t *melem;
+    mixer->refcnt--;
+    if (mixer->refcnt < 1)
+    {
+        if (mixer->hdl)
+            snd_mixer_close(mixer->hdl);
+        free(mixer);
+    }
+}
 
-    melem = mixer_find_selem(mixer->hdl, elemname);
-    if (melem == NULL)
-        goto mixer_elem_find_failed;
+static void amixer_elem_dtor(lua_amixer_elem_t *elem)
+{
+    /*amixer_dtor(elem->mixer);*/
+    elem->refcnt--;
+    if (elem->refcnt < 1)
+    {
+        if (elem->hdl)
+            snd_mixer_elem_free(elem->hdl);
+        free(elem);
+    }
+}
 
-    elem = (lua_mixer_elem_t *)malloc(sizeof(lua_mixer_elem_t));
-    if (elem == NULL)
-        goto mixer_elem_malloc_failed;
-
-    elem->hdl = melem;
-    elem->mixer = mixer;
-    elem->refcnt = 1;
-
-    elem->pcaps = elem->ccaps = 0;
-    elem->prange.min = elem->prange.max = 0;
-    elem->crange.min = elem->crange.max = 0;
-    elem->prange.dBmin = elem->prange.dBmax = 0;
-    elem->crange.dBmin = elem->crange.dBmax = 0;
-
-    mixer->refcnt++;
-
-    return elem;
-
-mixer_elem_malloc_failed:
-    snd_mixer_elem_free(melem);
-
-mixer_elem_find_failed:
-    return NULL;
+static void amixer_chan_dtor(lua_amixer_chan_t *chan)
+{
+    amixer_elem_dtor(chan->elem);
 }
 
 /**
  * Прочитать свойтсва элемента миксера и закешировать их
  */
-void mixer_fill_caps(lua_mixer_elem_t *elem)
+void amixer_fill_caps(lua_amixer_elem_t *elem)
 {
     if (snd_mixer_selem_has_playback_volume(elem->hdl))
     {
@@ -237,22 +227,68 @@ void mixer_fill_caps(lua_mixer_elem_t *elem)
     if (snd_mixer_selem_is_enum_capture(elem->hdl))
         elem->ccaps |= LUAA_MIX_CAP_ENUM;
 }
+
+/**
+ * Создать новую структуру-обёртку для элемента миксера по его имени
+ */
+lua_amixer_elem_t *luaA_amixer_new_elem(lua_State *L, lua_amixer_t *mixer, snd_mixer_elem_t *melem)
+{
+    //int err;
+    lua_amixer_elem_t *elem = NULL;
+    lua_amixer_elem_t **elemptr;
+
+    if (melem == NULL)
+        goto amixer_elem_find_failed;
+
+    elem = (lua_amixer_elem_t *)malloc(sizeof(lua_amixer_elem_t));
+    if (elem == NULL)
+        goto amixer_elem_malloc_failed;
+
+    elem->hdl = melem;
+    elem->mixer = mixer;
+    elem->refcnt = 1;
+
+    elem->pcaps = elem->ccaps = 0;
+    elem->prange.min = elem->prange.max = 0;
+    elem->crange.min = elem->crange.max = 0;
+    elem->prange.dBmin = elem->prange.dBmax = 0;
+    elem->crange.dBmin = elem->crange.dBmax = 0;
+    amixer_fill_caps(elem);
+
+    mixer->refcnt++;
+
+    elemptr = lua_newuserdata(L, sizeof(lua_amixer_elem_t *));
+    *elemptr = elem;
+    luaA_settype(L, -2, "amixer_elem");
+
+    return elem;
+
+amixer_elem_malloc_failed:
+    snd_mixer_elem_free(melem);
+
+amixer_elem_find_failed:
+    return NULL;
+}
+
 // }}}
 
 // Mixer element object {{{
-LUAA_FUNC(mixer_elem_next)
+LUAA_FUNC(amixer_elem_next)
 {
-    lua_mixer_elem_t **elemptr = luaL_checkudata(L, 2, "amixer_elem");
+    int argc = lua_gettop(L);
+    lua_amixer_elem_t **elemptr = luaL_checkudata(L, argc, "amixer_elem");
+
+    return luaA_amixer_new_elem(L, (*elemptr)->mixer, snd_mixer_elem_next((*elemptr)->hdl)) != NULL;
 }
 
 
-LUAA_FUNC(mixer_elem_index)
+LUAA_FUNC(amixer_elem_index)
 {
     luaA_checkmetaindex(L, "amixer_elem");
-    lua_mixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
+    lua_amixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
 
-    lua_mixer_t **mixptr;
-    lua_mixer_chan_t *chan;
+    lua_amixer_t **mixptr;
+    lua_amixer_chan_t *chan;
     snd_mixer_selem_channel_id_t chanid;
     const char *index = luaL_checkstring(L, 2);
     long longval;
@@ -290,7 +326,7 @@ LUAA_FUNC(mixer_elem_index)
         }
         lua_pushnumber(L, longval);
     } else if (strcmp(index, "mixer") == 0) {
-        mixptr = lua_newuserdata(L, sizeof(lua_mixer_t *));
+        mixptr = lua_newuserdata(L, sizeof(lua_amixer_t *));
         *mixptr = (*elemptr)->mixer;
         (*mixptr)->refcnt++;
     } else if (strcmp(index, "name") == 0) {
@@ -300,9 +336,11 @@ LUAA_FUNC(mixer_elem_index)
     } else if (strcmp(index, "volrange") == 0) {
         if ((*elemptr)->pcaps & LUAA_MIX_CAP_VOLUME)
         {
-            snd_mixer_selem_get_playback_volume_range((*elemptr)->hdl, &longval, &longvalx);
+            longval = (*elemptr)->prange.min;
+            longvalx = (*elemptr)->prange.max;
         } else if ((*elemptr)->ccaps & LUAA_MIX_CAP_VOLUME) {
-            snd_mixer_selem_get_capture_volume_range((*elemptr)->hdl, &longval, &longvalx);
+            longval = (*elemptr)->crange.min;
+            longvalx = (*elemptr)->crange.max;
         } else {
             return 0;
         }
@@ -313,9 +351,11 @@ LUAA_FUNC(mixer_elem_index)
     } else if (strcmp(index, "dBrange") == 0) {
         if ((*elemptr)->pcaps & LUAA_MIX_CAP_VOLUME)
         {
-            snd_mixer_selem_get_playback_dB_range((*elemptr)->hdl, &longval, &longvalx);
+            longval = (*elemptr)->prange.dBmin;
+            longvalx = (*elemptr)->prange.dBmax;
         } else if ((*elemptr)->ccaps & LUAA_MIX_CAP_VOLUME) {
-            snd_mixer_selem_get_capture_dB_range((*elemptr)->hdl, &longval, &longvalx);
+            longval = (*elemptr)->crange.dBmin;
+            longvalx = (*elemptr)->crange.dBmax;
         } else {
             return 0;
         }
@@ -325,31 +365,27 @@ LUAA_FUNC(mixer_elem_index)
         luaA_isettable(L, -2, 2, number, longvalx);
     } else if (strcmp(index, "mono") == 0) {
         lua_pushboolean(L, ((*elemptr)->pcaps | (*elemptr)->ccaps) & LUAA_MIX_CAP_MONO);
-    } else if (strcmp(index, "joined") == 0) {
-        lua_pushboolean(L, ((*elemptr)->pcaps | (*elemptr)->ccaps) & (LUAA_MIX_CAP_VJOINED | LUAA_MIX_CAP_SJOINED));
     } else if (strcmp(index, "playback") == 0) {
-        if ((*elemptr)->pcaps) {
-            lua_pushboolean(L, 1);
-        } else if ((*elemptr)->ccaps) {
-            lua_pushboolean(L, 0);
-        } else {
-            return 0;
-        }
+        lua_pushboolean(L, (*elemptr)->pcaps);
+    } else if (strcmp(index, "capture") == 0) {
+        lua_pushboolean(L, (*elemptr)->ccaps);
     } else {
-        chanid = mixer_get_chanid_by_name(index);
-        chan = lua_newuserdata(L, sizeof(lua_mixer_chan_t));
+        chanid = amixer_get_chanid_by_name(index);
+        chan = lua_newuserdata(L, sizeof(lua_amixer_chan_t));
         if (chan == NULL) return 0;
-        chan->chan = chanid;
+        chan->hdl = chanid;
         chan->elem = *elemptr;
         (*elemptr)->refcnt++;
+
+        luaA_settype(L, -2, "amixer_chan");
     }
     return 1;
 }
 
-LUAA_FUNC(mixer_elem_newindex)
+LUAA_FUNC(amixer_elem_newindex)
 {
-    lua_mixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
-    lua_mixer_chan_t *chan;
+    lua_amixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
+    lua_amixer_chan_t *chan;
     snd_mixer_selem_channel_id_t chanid;
     const char *index = luaL_checkstring(L, 2);
     long longval;
@@ -371,31 +407,27 @@ LUAA_FUNC(mixer_elem_newindex)
     }
 }
 
-LUAA_FUNC(mixer_elem_close)
+LUAA_FUNC(amixer_elem_close)
 {
-    lua_mixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
-    if (--(*elemptr)->refcnt < 1)
-    {
-        snd_mixer_elem_free((*elemptr)->hdl);
-        free(*elemptr);
-    }
+    lua_amixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
+    amixer_elem_dtor(*elemptr);
 }
 
-LUAA_FUNC(mixer_elem_tostring)
+LUAA_FUNC(amixer_elem_tostring)
 {
-    lua_mixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
-    lua_pushfstring(L, "amixer_elem [%s:%d]", snd_mixer_selem_get_name((*elemptr)->hdl), snd_mixer_selem_get_index((*elemptr)->hdl));
+    lua_amixer_elem_t **elemptr = luaL_checkudata(L, 1, "amixer_elem");
+    lua_pushfstring(L, "[udata amixer_elem (%s:%d)]", snd_mixer_selem_get_name((*elemptr)->hdl), snd_mixer_selem_get_index((*elemptr)->hdl));
     return 1;
 }
 // }}}
 
 // Mixer object methods {{{
-LUAA_FUNC(mixer_open)
+LUAA_FUNC(amixer_open)
 {
     const char *mixdev = luaL_checkstring(L, 1);
     snd_mixer_t *hdl;
-    lua_mixer_t *mixer;
-    lua_mixer_t **mixptr;
+    lua_amixer_t *mixer;
+    lua_amixer_t **mixptr;
     //int err;
 
     if (snd_mixer_open(&hdl, 0) < 0)
@@ -406,10 +438,10 @@ LUAA_FUNC(mixer_open)
             || snd_mixer_load(hdl) < 0)
         goto mixer_alloc_failed;
 
-    mixer = (lua_mixer_t *)malloc(sizeof(lua_mixer_t));
+    mixer = (lua_amixer_t *)malloc(sizeof(lua_amixer_t));
     if (mixer == NULL) goto mixer_alloc_failed;
 
-    mixptr = lua_newuserdata(L, sizeof(lua_mixer_t *));
+    mixptr = lua_newuserdata(L, sizeof(lua_amixer_t *));
     if (mixptr == NULL) goto mixer_udata_failed;
     *mixptr = mixer; 
 
@@ -429,62 +461,37 @@ mixer_open_failed:
     return 0;
 }
 
-LUAA_FUNC(mixer_close)
+LUAA_FUNC(amixer_close)
 {
-    lua_mixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
-    if (--(*mixptr)->refcnt < 1)
-    {
-        snd_mixer_close((*mixptr)->hdl);
-        free(*mixptr);
-    }
+    lua_amixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
+    amixer_dtor(*mixptr);
 }
 
 /**
  * Конструируем луа-объект «элемент миксера»
  */
-LUAA_FUNC(mixer_index)
+LUAA_FUNC(amixer_index)
 {
     luaA_checkmetaindex(L, "amixer");
-    lua_mixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
+    lua_amixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
     const char *index = luaL_checkstring(L, 2);
-    lua_mixer_elem_t *elem;
-    lua_mixer_elem_t **elemptr;
 
-	elem = mixer_new_elem(*mixptr, index);
-    if (elem == NULL)
-        goto mixer_elem_new_failed;
-
-    elemptr = lua_newuserdata(L, sizeof(lua_mixer_elem_t *));
-    if (elemptr == NULL)
-        goto mixer_elem_udata_failed;
-
-    mixer_fill_caps(elem);
-    *elemptr = elem;
-    luaA_settype(L, -2, "amixer_elem");
-
-    return 1;
-
-mixer_elem_udata_failed:
-    snd_mixer_elem_free(elem->hdl);
-    free(elem);
-
-mixer_elem_new_failed:
-    return 0;
+	return luaA_amixer_new_elem(L, *mixptr, amixer_find_selem((*mixptr)->hdl, index)) != NULL;
 }
 
 // amixer_elem, int, table of int, bool
-LUAA_FUNC(mixer_newindex)
+LUAA_FUNC(amixer_newindex)
 {
-    lua_mixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
+    lua_amixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
     const char *index = luaL_checkstring(L, 2);
-    lua_mixer_elem_t **elemptr;
+    lua_amixer_elem_t **elemptr;
     snd_mixer_elem_t *elem;
     snd_mixer_selem_channel_id_t chanid;
     int intval;
     unsigned int uintval;
     long longval;
 
-    elem = mixer_find_selem((*mixptr)->hdl, index);
+    elem = amixer_find_selem((*mixptr)->hdl, index);
     if (elem == NULL) return 0;
 
     if (lua_isnumber(L, 3)) { // set volume of all channels
@@ -531,54 +538,173 @@ LUAA_FUNC(mixer_newindex)
     snd_mixer_elem_free(elem);
 }
 
-LUAA_FUNC(mixer_each)
+LUAA_FUNC(amixer_each)
 {
-    lua_mixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
-    lua_pushcfunction(L, luaA_mixer_elem_next);
-    /*lua_mixer_elem_t *elem = luaA_mixer_new_elem(L, , );*/
-    /*elem->hdl =*/
-    lua_pushcfunction(L, luaA_mixer_elem_next);
+    lua_amixer_t **mixptr = luaL_checkudata(L, 1, "amixer");
+
+    lua_pushcfunction(L, luaA_amixer_elem_next);
+
+    if (luaA_amixer_new_elem(L, (*mixptr), snd_mixer_first_elem((*mixptr)->hdl)) == NULL)
+    {
+        lua_pop(L, 1);
+        return 0;
+    }
+    lua_pushvalue(L, -1);
+    
     return 3;
 }
 
-LUAA_FUNC(mixer_tostring)
+LUAA_FUNC(amixer_tostring)
 {
-    lua_mixer_elem_t **mixptr = luaL_checkudata(L, 1, "amixer");
-    lua_pushfstring(L, "amixer");
+    lua_amixer_elem_t **mixptr = luaL_checkudata(L, 1, "amixer");
+    lua_pushfstring(L, "[udata amixer]");
     return 1;
 }
 // }}}
 
+// Mixer channel methods {{{
+
+LUAA_FUNC(amixer_chan_tostring)
+{
+    lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
+    lua_pushfstring(L, "[udata amixer_chan (%s)]", snd_mixer_selem_channel_name(chan->hdl));
+    return 1;
+}
+
+LUAA_FUNC(amixer_chan_index)
+{
+    lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
+    lua_amixer_elem_t **elemptr;
+    const char *index = luaL_checkstring(L, 2);
+    long longval;
+    int intval;
+
+    if (strcmp(index, "vol") == 0) {
+        if (chan->elem->pcaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_get_playback_volume(chan->elem->hdl, chan->hdl, &longval);
+        } else if (chan->elem->ccaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_get_capture_volume(chan->elem->hdl, chan->hdl, &longval);
+        } else {
+            return 0;
+        }
+        lua_pushnumber(L, longval);
+    } else if (strcmp(index, "dB") == 0) {
+        if (chan->elem->pcaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_get_playback_dB(chan->elem->hdl, chan->hdl, &longval);
+        } else if (chan->elem->ccaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_get_capture_dB(chan->elem->hdl, chan->hdl, &longval);
+        } else {
+            return 0;
+        }
+        lua_pushnumber(L, longval);
+    } else if (strcmp(index, "muted") == 0) {
+        if (chan->elem->pcaps & LUAA_MIX_CAP_SWITCH) {
+            snd_mixer_selem_get_playback_switch(chan->elem->hdl, chan->hdl, &intval);
+        } else if (chan->elem->ccaps & LUAA_MIX_CAP_SWITCH) {
+            snd_mixer_selem_get_capture_switch(chan->elem->hdl, chan->hdl, &intval);
+        } else {
+            return 0;
+        }
+        lua_pushboolean(L, intval == 0);
+    } else if (strcmp(index, "name") == 0) {
+        lua_pushstring(L, snd_mixer_selem_channel_name(chan->hdl));
+    } else if (strcmp(index, "idx") == 0) {
+        lua_pushnumber(L, chan->hdl);
+    } else if (strcmp(index, "elem") == 0) {
+        elemptr = lua_newuserdata(L, sizeof(lua_amixer_elem_t));    
+        *elemptr = chan->elem;
+        luaA_settype(L, -2, "amixer_elem");
+        chan->elem->refcnt++;
+    } else {
+        return 0;
+    }
+
+    return 1;
+}
+
+LUAA_FUNC(amixer_chan_newindex)
+{
+    lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
+    lua_amixer_elem_t **elemptr;
+    const char *index = luaL_checkstring(L, 2);
+    long longval;
+    int intval;
+
+    if (strcmp(index, "vol") == 0) {
+        longval = luaL_checknumber(L, 3);
+        if (chan->elem->pcaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_set_playback_volume(chan->elem->hdl, chan->hdl, longval);
+        } else if (chan->elem->ccaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_set_capture_volume(chan->elem->hdl, chan->hdl, longval);
+        }
+    } else if (strcmp(index, "dB") == 0) {
+        longval = luaL_checknumber(L, 3);
+        if (chan->elem->pcaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_set_playback_dB(chan->elem->hdl, chan->hdl, longval, 1);
+        } else if (chan->elem->ccaps & LUAA_MIX_CAP_VOLUME) {
+            snd_mixer_selem_set_capture_dB(chan->elem->hdl, chan->hdl, longval, 1);
+        }
+    } else if (strcmp(index, "muted") == 0) {
+        intval = lua_toboolean(L, 3) == 0;
+        if (chan->elem->pcaps & LUAA_MIX_CAP_SWITCH) {
+            snd_mixer_selem_set_playback_switch(chan->elem->hdl, chan->hdl, intval);
+        } else if (chan->elem->ccaps & LUAA_MIX_CAP_SWITCH) {
+            snd_mixer_selem_set_capture_switch(chan->elem->hdl, chan->hdl, intval);
+        }
+    }
+
+    return 0;
+}
+
+LUAA_FUNC(amixer_chan_close)
+{
+    lua_amixer_chan_t *chan = luaL_checkudata(L, 1, "amixer_chan");
+    amixer_chan_dtor(chan);
+}
+
+// }}}
 
 static const luaL_reg amixer_methods[] = {
-	{"open", luaA_mixer_open},
-	{"close", luaA_mixer_close},
+	{"open", luaA_amixer_open},
+	{"close", luaA_amixer_close},
 	{NULL, NULL}
 };
 
 static const luaL_reg amixer_meta[] = {
-    {"__index", luaA_mixer_index},
-    {"__newindex", luaA_mixer_newindex},
-    {"__gc", luaA_mixer_close},
-    {"__tostring", luaA_mixer_tostring},
+    {"__index", luaA_amixer_index},
+    {"__newindex", luaA_amixer_newindex},
+    {"__gc", luaA_amixer_close},
+    {"__tostring", luaA_amixer_tostring},
 
-    {"each", luaA_mixer_each},
+    {"each", luaA_amixer_each},
 	{NULL, NULL}
 };
 
 static const luaL_reg amixer_elem_meta[] = {
-    {"__index", luaA_mixer_elem_index},
-    {"__newindex", luaA_mixer_elem_newindex},
-    {"__gc", luaA_mixer_elem_close},
-    {"__tostring", luaA_mixer_elem_tostring},
+    {"__index", luaA_amixer_elem_index},
+    {"__newindex", luaA_amixer_elem_newindex},
+    {"__gc", luaA_amixer_elem_close},
+    {"__tostring", luaA_amixer_elem_tostring},
 
-    {"next", luaA_mixer_elem_next},
+    {"next", luaA_amixer_elem_next},
+    {NULL, NULL}
+};
+
+static const luaL_reg amixer_chan_meta[] = {
+    {"__index", luaA_amixer_chan_index},
+    {"__newindex", luaA_amixer_chan_newindex},
+    {"__gc", luaA_amixer_chan_close},
+    {"__tostring", luaA_amixer_chan_tostring},
+
     {NULL, NULL}
 };
 
 LUALIB_API int luaopen_amixer(lua_State *L)
 {
+    amixer_init_chanid_cache();
+
     luaA_deftype(L, amixer_elem);
+    luaA_deftype(L, amixer_chan);
 
     luaL_newmetatable(L, "amixer");
 	lua_pushvalue(L, -1);
