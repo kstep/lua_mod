@@ -8,13 +8,13 @@ function print_vol(mx)
 end
 
 print("test: mixer 0 opening")
-mix = mixer.open(0)
+mix = mixer.open(1)
 
 print("\ntest: printing channels: pcm[1], vol[2]")
 print(mix["pcm"][1])
-print(mix["vol"][2])
+print(mix["digital1"][1])
 
-print("\ntest: passing mixer to function")
+--[[print("\ntest: passing mixer to function")
 print_vol(mix)
 
 print("\ntest: get channel into separate var and print it")
@@ -32,4 +32,4 @@ remix = pcm:mixer()
 print(remix)
 
 print("\ntest: garbage should be collected now!\n")
-
+]]

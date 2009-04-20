@@ -39,7 +39,9 @@ static int luaA_mpdc_connect(struct sockaddr_in *addr) {
 	int sh;
 
 	sh = socket(PF_INET, SOCK_STREAM, 6);
-	if (sh < 0 || connect(sh, (struct sockaddr *)addr, sizeof(struct sockaddr_in)) < 0) {
+	if (sh < 0) return -1;
+	if (connect(sh, (struct sockaddr *)addr, sizeof(struct sockaddr_in)) < 0) {
+		close(sh);
 		return -1;
 	}
 

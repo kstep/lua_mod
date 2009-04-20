@@ -72,7 +72,7 @@
 
 typedef struct {
     snd_mixer_selem_channel_id_t chan;
-    char *name;
+    const char *name;
 } lua_amixer_channel_name_t;
 
 typedef struct {
@@ -534,39 +534,53 @@ LUAA_FUNC(amixer_elem_tostring)
  */
 LUAA_FUNC(amixer_open)
 {
+    /*printf("1\n");*/
     const char *mixdev = luaL_checkstring(L, 1);
     snd_mixer_t *hdl;
     lua_amixer_t *mixer;
     lua_amixer_t **mixptr;
-    //int err;
+    /*snd_hctl_t *hctl;*/
+    /*int err;*/
+/*printf("2\n");*/
 
-    if (snd_mixer_open(&hdl, 0) < 0)
+    if (snd_mixer_open(&hdl, SND_CTL_NONBLOCK) < 0)
         goto mixer_open_failed;
 
+/*printf("3\n");*/
+    /*err = snd_hctl_open(&hctl, mixdev, SND_CTL_NONBLOCK | SND_CTL_READONLY);*/
+/*printf("3a\n");*/
+    /*if (err < 0 || snd_mixer_attach_hctl(hdl, hctl) < 0*/
     if (snd_mixer_attach(hdl, mixdev) < 0
             || snd_mixer_selem_register(hdl, NULL, NULL) < 0
             || snd_mixer_load(hdl) < 0)
         goto mixer_alloc_failed;
 
+/*printf("4\n");*/
     mixer = (lua_amixer_t *)malloc(sizeof(lua_amixer_t));
     if (mixer == NULL) goto mixer_alloc_failed;
 
+/*printf("5\n");*/
     mixptr = lua_newuserdata(L, sizeof(lua_amixer_t *));
     if (mixptr == NULL) goto mixer_udata_failed;
     *mixptr = mixer; 
 
+/*printf("6\n");*/
     mixer->hdl = hdl;
     mixer->refcnt = 1;
 
+/*printf("7\n");*/
     luaA_settype(L, -2, "amixer");
+/*printf("8\n");*/
     return 1;
 
 mixer_udata_failed:
     free(hdl);
 
 mixer_alloc_failed:
+    /*printf("9\n");*/
     snd_mixer_close(hdl);
 
+    /*printf("10\n");*/
 mixer_open_failed:
     return 0;
 }
