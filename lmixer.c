@@ -42,7 +42,11 @@ static int get_mixer_dev_num(const char* name) {
 
 static int open_mixer_dev(int mixerno) {
 	char buf[14];
-	snprintf(buf, sizeof(buf), "/dev/mixer%d", mixerno);
+        if (mixerno > 0) {
+            snprintf(buf, sizeof(buf), "/dev/mixer%d", mixerno);
+        } else {
+            snprintf(buf, sizeof(buf), "/dev/mixer");
+        }
 
 	int mixer = open(buf, O_RDWR);
 	return mixer;
@@ -72,7 +76,11 @@ static inline int luaA_usemetatable(lua_State *L, int objidx, int methodidx) {
 
 static int luaA_mixer_device(lua_State *L) {
 	mixer_t **mixer = luaL_checkudata(L, 1, "mixer");
-	lua_pushfstring(L, "/dev/mixer%d", (*mixer)->num);
+        if ((*mixer)->num > 0) {
+            lua_pushfstring(L, "/dev/mixer%d", (*mixer)->num);
+        } else {
+            lua_pushstring(L, "/dev/mixer");
+        }
 	return 1;
 }
 static int luaA_device_device(lua_State *L) {
@@ -141,7 +149,11 @@ static int luaA_mixer_set(lua_State *L) {
 
 static int luaA_mixer_name(lua_State *L) {
 	mixer_t **mixer = luaL_checkudata(L, 1, "mixer");
-	lua_pushfstring(L, "udata mixer /dev/mixer%d [fh:%d]", (*mixer)->num, (*mixer)->fh);
+        if ((*mixer)->num > 0) {
+            lua_pushfstring(L, "udata mixer /dev/mixer%d [fh:%d]", (*mixer)->num, (*mixer)->fh);
+        } else {
+            lua_pushfstring(L, "udata mixer /dev/mixer [fh:%d]", (*mixer)->fh);
+        }
 	return 1;
 }
 

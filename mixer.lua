@@ -8,7 +8,7 @@ function print_vol(mx)
 end
 
 print("test: mixer 0 opening")
-mix = mixer.open(1)
+mix = mixer.open(-1)
 
 print("\ntest: printing channels: pcm[1], vol[2]")
 print(mix["pcm"][1])
