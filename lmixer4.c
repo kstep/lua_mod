@@ -12,6 +12,7 @@
 #endif
 
 #define IN_ENUM(ext, ind) ((ext)[(ind) / 8] & (1 << ((ind) % 8)))
+#define BOUND_CHECK(value, min, max) if ((value) < (min)) (value) = (min); else if ((value) > (max)) (value) = (max)
 
 typedef struct {
     /*char* name;*/
@@ -91,7 +92,7 @@ static int format_mono_value(lua_State *L, mixer_ext_t *mext, int value) {
     return 0; return;
     }
 
-    lua_pushvalue(L, value & mask);
+    lua_pushnumber(L, value & mask);
     return 1;
 }
 
@@ -169,13 +170,7 @@ static int luaA_mixer_set(lua_State *L) {
 }
 
 static int luaA_mixer_name(lua_State *L) {
-    mixer_t **mixer = luaL_checkudata(L, 1, "mixer");
-    if ((*mixer)->num > 0) {
-        lua_pushfstring(L, "udata mixer /dev/mixer%d [fh:%d]", (*mixer)->num, (*mixer)->fh);
-    } else {
-        lua_pushfstring(L, "udata mixer /dev/mixer [fh:%d]", (*mixer)->fh);
-    }
-    return 1;
+    return 0;
 }
 
 static int luaA_mixer_ext_table(lua_State *L) {
@@ -194,7 +189,7 @@ static int luaA_mixer_ext_mixer(lua_State *L) {
     (*mixer)->refcnt++;
     warn("Mixer %p refcount increased to %d", *mixer, (*mixer)->refcnt);
 
-    luaL_getmetatable(L, "mixer");
+    luaL_getmetatable(L, "mixer_dev");
     lua_setmetatable(L, -2);
     return 1;
 }
@@ -212,8 +207,8 @@ static int luaA_mixer_ext_less(lua_State *L) {
 }
 
 static int luaA_mixer_equal(lua_State *L) {
-    mixer_t **mixer1 = luaL_checkudata(L, 1, "mixer");
-    mixer_t **mixer2 = luaL_checkudata(L, 2, "mixer");
+    mixer_t **mixer1 = luaL_checkudata(L, 1, "mixer_dev");
+    mixer_t **mixer2 = luaL_checkudata(L, 2, "mixer_dev");
     lua_pushboolean(L, (*mixer1)->num == (*mixer2)->num);
     return 1;
 }
@@ -243,14 +238,14 @@ static int luaA_mixer_open(lua_State *L) {
     newmixer->refcnt = 1;
     warn("Mixer %p refcount initialized to %d", newmixer, newmixer->refcnt);
 
-    luaL_getmetatable(L, "mixer");
+    luaL_getmetatable(L, "mixer_dev");
     lua_setmetatable(L, -2);
 
     return 1;
 }
 
 static int luaA_mixer_close(lua_State *L) {
-    mixer_t **mixer = luaL_checkudata(L, 1, "mixer");
+    mixer_t **mixer = luaL_checkudata(L, 1, "mixer_dev");
     (*mixer)->refcnt--;
     warn("Mixer %p refcount decreased to %d", *mixer, (*mixer)->refcnt);
     if ((*mixer)->refcnt < 1) {
@@ -268,7 +263,7 @@ static const luaL_reg mixer_methods[] = {
 };
 
 static int luaA_mixer_get(lua_State *L) {
-    mixer_t **mixer = luaL_checkudata(L, 1, "mixer");
+    mixer_t **mixer = luaL_checkudata(L, 1, "mixer_dev");
     if ((*mixer)->fh < 0) return 0;
     if (luaA_usemetatable(L, 1, 2)) return 1;
 
@@ -323,7 +318,7 @@ static int luaA_mixer_get(lua_State *L) {
 }
 
 static int luaA_mixer_len(lua_State *L) {
-    mixer_t **mixer = luaL_checkudata(L, 1, "mixer");
+    mixer_t **mixer = luaL_checkudata(L, 1, "mixer_dev");
     int nmix;
     nmix = (*mixer)->num;
     if (ioctl((*mixer)->fh, SNDCTL_MIX_NREXT, &nmix) < 0)
@@ -348,7 +343,7 @@ static const luaL_reg mixer_meta[] = {
     {"__index", luaA_mixer_get},
     {"__newindex", luaA_mixer_set},
     {"__gc", luaA_mixer_close},
-    {"__tostring", luaA_mixer_name},
+    /*{"__tostring", luaA_mixer_name},*/
     {"__eq", luaA_mixer_equal},
     {"__len", luaA_mixer_len},
     {"mixer_ext", luaA_mixer_ext},
@@ -470,10 +465,12 @@ static int luaA_mixer_ext_set(lua_State *L) {
     mixer_ext_t *mext = luaL_checkudata(L, 1, "mixer_ext");
     if ((mext->ext.flags & MIXF_WRITEABLE) == 0) return 0;
 
+    const char* strindex = luaL_checkstring(L, 2);
+    if (strcmp(strindex, "value") != 0) return 0;
+
     oss_mixer_enuminfo enuminf;
-    const char* strindex;
     int shift = 0, mask = 0, mono = 0, onoff = 0;
-    int value;
+    int value, rvalue;
 
     switch (mext->ext.type) {
         case MIXT_SLIDER:
@@ -502,35 +499,40 @@ static int luaA_mixer_ext_set(lua_State *L) {
         default:;
     }
 
-    if (lua_istable(L, 2)) { // two channels
+    if (lua_istable(L, 3)) { // two channels
         if (!mask || mono) return 0;
 
-        lua_rawgeti(L, 2, 1); // left channel
-        lua_rawgeti(L, 2, 2); // right channel
-        value = (((int)luaL_checknumber(L, -1) & mask) << shift) | ((int)luaL_checknumber(L, -2) & mask);
+        lua_rawgeti(L, 3, 1); // left channel
+        lua_rawgeti(L, 3, 2); // right channel
+        value = luaL_checknumber(L, -1); BOUND_CHECK(value, mext->ext.minvalue, mext->ext.maxvalue);
+        rvalue = luaL_checknumber(L, -2); BOUND_CHECK(rvalue, mext->ext.minvalue, mext->ext.maxvalue);
+
+        value = ((value & mask) << shift) | (rvalue & mask);
         lua_pop(L, 2);
 
-    } else if (lua_isboolean(L, 2)) { // switch/mute
+    } else if (lua_isboolean(L, 3)) { // switch/mute
         if (!onoff) return 0;
-        value = lua_toboolean(L, 2);
+        value = lua_toboolean(L, 3);
 
-    } else if (lua_isnumber(L, 2)) { // single channel or set both channels to this value
+    } else if (lua_isnumber(L, 3)) { // single channel or set both channels to this value
         if (!mask) return 0;
-        value = (int)lua_tonumber(L, 2) & mask;
+        value = lua_tonumber(L, 3);
+        BOUND_CHECK(value, mext->ext.minvalue, mext->ext.maxvalue);
+        value = value & mask;
         if (!mono) value = (value << shift) | value;
 
-    } else if (lua_isstring(L, 2)) { // set enum
+    } else if (lua_isstring(L, 3)) { // set enum
         if (mext->ext.type != MIXT_ENUM) return 0;
         enuminf.dev = mext->ext.dev;
         enuminf.ctrl = mext->ext.ctrl;
         if (ioctl(mext->mixer->fh, SNDCTL_MIX_ENUMINFO, &enuminf) < 0) return 0;
 
-        strindex = lua_tostring(L, 2);
+        const char* strvalue = lua_tostring(L, 3);
 
         for (value = 0; value < mext->ext.maxvalue; value++) {
             if (!IN_ENUM(mext->ext.enum_present, value))
                 continue;
-            if (strcmp(enuminf.strings + enuminf.strindex[value], strindex) == 0)
+            if (strcmp(enuminf.strings + enuminf.strindex[value], strvalue) == 0)
                 break;
         }
         if (value == mext->ext.maxvalue) return 0;
@@ -556,7 +558,7 @@ static int luaA_mixer_ext_len(lua_State *L) {
 static const luaL_reg mixer_ext_meta[] = {
     {"__index", luaA_mixer_ext_get},
     {"__newindex", luaA_mixer_ext_set},
-    {"__tostring", luaA_mixer_ext_name},
+    /*{"__tostring", luaA_mixer_ext_name},*/
     {"__eq", luaA_mixer_ext_equal},
     {"__lt", luaA_mixer_ext_less},
     {"__gc", luaA_mixer_ext_gc},
@@ -568,28 +570,15 @@ static const luaL_reg mixer_ext_meta[] = {
     {NULL, NULL}
 };
 
-inline void luaA_openlib (lua_State *L, const char* name, const luaL_reg meta[], const luaL_reg methods[]) {
-    luaL_newmetatable(L, name);
-    lua_pushvalue(L, -1);
-    lua_setfield(L, -2, "__index");
-
-    luaL_register(L, NULL, meta);
-    luaL_register(L, name, methods);
-    lua_pushvalue(L, -1);
-    lua_setmetatable(L, -2);
-    lua_pop(L, 2);
+inline void luaA_newmetatable(lua_State *L, const char* name, const luaL_reg meta[]) {
+	luaL_newmetatable(L, name);
+	luaL_register(L, NULL, meta);
+	lua_pop(L, 1);
 }
 
 LUALIB_API int luaopen_mixer (lua_State *L) {
-    luaL_newmetatable(L, "mixer_ext");
-    luaL_register(L, NULL, mixer_ext_meta);
-    lua_pop(L, 1);
-
-    luaA_openlib(L, "mixer", mixer_meta, mixer_methods);
-    /*
-       lua_pushliteral(L, "version");
-       lua_pushliteral(L, "mixer library for lua");
-       lua_settable(L, -3);
-       */
-    return 0;
+    luaA_newmetatable(L, "mixer_ext", mixer_ext_meta);
+    luaA_newmetatable(L, "mixer_dev", mixer_meta);
+    luaL_register(L, "mixer", mixer_methods);
+    return 1;
 }
