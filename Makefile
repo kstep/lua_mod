@@ -26,6 +26,11 @@ lmixer.so:
 	gcc -o lmixer.so -shared lmixer.o && \
 	strip lmixer.so
 
+lmixer4.so:
+	gcc -I/usr/lib/oss/include ${GCC_FLAGS} -c lmixer4.c && \
+	gcc -o lmixer4.so -shared lmixer4.o && \
+	strip lmixer4.so
+
 lamixer.so:
 	gcc ${GCC_FLAGS} -c lamixer.c && \
 	gcc -o lamixer.so -lasound -shared lamixer.o && \
